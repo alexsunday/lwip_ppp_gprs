@@ -6,54 +6,48 @@
 #include "stm32f10x.h"
 #include "serial.h"
 
-static uint8_t modem_rx_buf[1600];
-static uint8_t modem_tx_buf[1600];
-static uint8_t serial1_rx_buf[128];
-static uint8_t serial1_tx_buf[128];
+static volatile uint8_t modem_rx_buf[1600];
+static volatile uint8_t modem_tx_buf[1600];
+static volatile uint8_t serial1_rx_buf[128];
+static volatile uint8_t serial1_tx_buf[128];
 
-
-// serial 1
-void USART1_IRQHandler(void)
+__asm unsigned int CPU_SR_Save(void)
 {
-  uint8_t clear = clear;
-
-	if(USART_GetITStatus(USART1, USART_IT_IDLE) != RESET) {
-		clear = USART1->SR;
-		clear = USART1->DR;
-		DMA_Cmd(DMA1_Channel5, DISABLE);
-		memset((char*)serial1_rx_buf, 0, sizeof(serial1_rx_buf));
-		DMA_SetCurrDataCounter(DMA1_Channel5, sizeof(serial1_rx_buf));
-		DMA_Cmd(DMA1_Channel5, ENABLE);
-	}
+     MRS     R0, PRIMASK
+     CPSID   I
+     BX      LR
 }
 
-
-// modem
-void USART2_IRQHandler(void)
+__asm void CPU_SR_Restore(unsigned int cpu_sr)
 {
-	uint8_t clear = clear;
-
-	if(USART_GetITStatus(USART2, USART_IT_IDLE) != RESET) {
-		clear = USART2->SR;
-		clear = USART2->DR;
-		
-		DMA_Cmd(DMA1_Channel6, DISABLE);
-		DMA_SetCurrDataCounter(DMA1_Channel6, sizeof(modem_rx_buf));
-		DMA_Cmd(DMA1_Channel6, ENABLE);
-	}
+     MSR     PRIMASK, R0
+     BX      LR  
 }
 
+void reset_dma_ptr(DMA_Channel_TypeDef* channel, int length)
+{
+	unsigned int sr;
+	
+	sr = CPU_SR_Save();
+	DMA_Cmd(channel, DISABLE);
+	DMA_SetCurrDataCounter(DMA1_Channel6, length);
+	DMA_Cmd(channel, ENABLE);
+	CPU_SR_Restore(sr);
+}
 
 void modemWriteData(const char* buf, uint32_t in_length)
 {
 	if(in_length > sizeof(modem_tx_buf)) {
 		return;
 	}
+	if(in_length == 0) {
+		return;
+	}
 	
 	while(!DMA_GetFlagStatus(DMA1_FLAG_TC7));
 	DMA_Cmd(DMA1_Channel7, DISABLE);
 
-	memcpy(modem_tx_buf, buf, in_length);
+	memcpy((void*)modem_tx_buf, buf, in_length);
 	DMA_ClearFlag(DMA1_FLAG_TC7);
 	DMA_SetCurrDataCounter(DMA1_Channel7, in_length);
 	DMA_Cmd(DMA1_Channel7, ENABLE);
@@ -63,6 +57,9 @@ void modemWriteData(const char* buf, uint32_t in_length)
 void uart1SendContent(const uint8_t *buf, uint16_t in_length)
 {
 	if(in_length > sizeof(serial1_tx_buf)) {
+		return;
+	}
+	if(in_length == 0) {
 		return;
 	}
 	
@@ -255,4 +252,34 @@ void mainSerialInitialize(uint32_t baud)
 		
 	memset((char *)serial1_rx_buf, 0, sizeof(serial1_rx_buf));
 	memset((char *)serial1_tx_buf, 0, sizeof(serial1_tx_buf));
+}
+
+
+// serial 1
+void USART1_IRQHandler(void)
+{
+  uint8_t clear = clear;
+
+	if(USART_GetITStatus(USART1, USART_IT_IDLE) != RESET) {
+		clear = USART1->SR;
+		clear = USART1->DR;
+		memset((char*)serial1_rx_buf, 0, sizeof(serial1_rx_buf));
+		reset_dma_ptr(DMA1_Channel5, sizeof(serial1_rx_buf));
+	}
+}
+
+
+// modem
+void USART2_IRQHandler(void)
+{
+	uint8_t clear = clear;
+
+	if(USART_GetITStatus(USART2, USART_IT_IDLE) != RESET) {
+		clear = USART2->SR;
+		clear = USART2->DR;
+		
+		uart1SendContent((void*)modem_rx_buf, strlen((const char*)modem_rx_buf));
+		memset((char*)modem_rx_buf, 0, sizeof(modem_rx_buf));
+		reset_dma_ptr(DMA1_Channel6, sizeof(modem_rx_buf));
+	}
 }
