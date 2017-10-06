@@ -22,4 +22,6 @@
 *.uvgui.*
 *.uvopt
 *.bak
+*.hex
+JLinkLog.txt
 
