@@ -132,8 +132,10 @@ void PendSV_Handler(void)
   * @param  None
   * @retval None
   */
+extern unsigned int system_tick_num;
 void SysTick_Handler(void)
 {
+	system_tick_num += 20;
 }
 
 /******************************************************************************/
